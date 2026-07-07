@@ -128,10 +128,17 @@ the natural continuation of that work, not a detour.
 
 Check off as completed. Each milestone should be independently demoable.
 
-- [~] **M0 — Spike / walking skeleton.** _In progress._ Isolated `:web` module added
+- [x] **M0 — Spike / walking skeleton.** _Done._ Isolated `:web` module added
       (Compose Multiplatform for Web / Kotlin/Wasm) with a trivial interactive screen,
-      plus a `web-build.yml` CI job. Kept separate from `:app` on purpose (see below).
-      Remaining: confirm a green CI bundle + render check in a browser.
+      plus a `web-build.yml` CI job that builds a green browser distribution. Kept
+      separate from `:app` on purpose (see below).
+- [~] **M5 (partial, brought forward) — PWA shell.** _In progress._ The walking
+      skeleton is now an installable, offline-capable PWA: web app manifest, app icons
+      (reused from the Android launcher icon), and a service worker that pre-caches the
+      app shell and runtime-caches the Wasm/Skia bundle so it launches offline after the
+      first load. Brought forward from M5 because it is low-risk, self-contained in
+      `:web`, and independent of the core-services work. Remaining M5 items (geolocation,
+      photo capture) still depend on M1/M3.
 - [ ] **M1 — Core services on web.** Web `Database` (SQLite+OPFS), settings,
       Ktor JS engine, Koin web module wired; a headless data flow (e.g. download a
       small area) works.
@@ -140,8 +147,9 @@ Check off as completed. Each milestone should be independently demoable.
 - [ ] **M3 — First quests end-to-end.** A handful of high-frequency quest forms
       migrated to common Compose; view quest → answer → local edit recorded.
 - [ ] **M4 — Auth + upload.** OSM OAuth redirect login; changeset upload from web.
-- [ ] **M5 — PWA shell.** Manifest + Service Worker; installable; offline app
-      launch; geolocation + photo capture wired.
+- [~] **M5 — PWA shell.** Manifest + Service Worker; installable; offline app
+      launch — _done (walking-skeleton shell, see M0/M5-partial above)_. Geolocation +
+      photo capture still pending (depend on M1/M3).
 - [ ] **M6 — Quest coverage.** Remaining quest/overlay forms migrated (shared with
       iOS effort); overlays working.
 - [ ] **M7 — Hardening.** Bundle-size budget, performance pass, cross-browser

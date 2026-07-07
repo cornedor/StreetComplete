@@ -37,7 +37,28 @@ toolchain used by the Kotlin/Wasm browser tooling.
 | `build.gradle.kts` | wasmJs target + Compose for Web wiring |
 | `src/wasmJsMain/kotlin/.../Main.kt` | entry point; mounts Compose into the page |
 | `src/wasmJsMain/kotlin/.../App.kt` | placeholder interactive screen |
-| `src/wasmJsMain/resources/index.html` | host page that loads the Wasm bundle |
+| `src/wasmJsMain/resources/index.html` | host page that loads the Wasm bundle + registers the service worker |
+| `src/wasmJsMain/resources/manifest.webmanifest` | web app manifest (name, icons, theme, `display: standalone`) |
+| `src/wasmJsMain/resources/sw.js` | service worker; caches the app shell + bundle for offline launch |
+| `src/wasmJsMain/resources/icons/` | app icons (reused from the Android launcher icon) |
+
+## PWA shell (installable + offline)
+
+Beyond the walking skeleton, the module now ships a minimal **PWA shell** so the
+skeleton is a real, installable Progressive Web App (part of milestone M5, brought
+forward because it is low-risk and self-contained):
+
+- **`manifest.webmanifest`** — makes the app installable to the home screen /
+  desktop, with a standalone display mode, the StreetComplete brand color
+  (`#7DB6D8`) and the launcher icon in SVG + 192/512 px PNG.
+- **`sw.js`** — a service worker that pre-caches the small app shell on install and
+  runtime-caches the (content-hashed) Wasm/Skia bundle, so once the app has loaded
+  successfully it launches offline. Bump `CACHE_VERSION` in `sw.js` when the shell
+  files change.
+
+Note that service workers only register over `https://` or `http://localhost`, so
+test installability/offline via the dev server or a served production bundle (not by
+opening `index.html` from disk).
 
 ## Next (M1)
 
