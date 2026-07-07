@@ -1,0 +1,178 @@
+# StreetComplete PWA — Port Roadmap
+
+> Status: **Planning**  ·  Owner: _TBD_  ·  Last updated: 2026-07-07
+>
+> This document plans a Progressive Web App (PWA) build of StreetComplete. It is a
+> living document — update the milestone checkboxes and open questions as work
+> progresses.
+
+## 1. Goal
+
+Ship StreetComplete as an installable, offline-capable PWA that runs in modern
+browsers, **reusing the existing Kotlin Multiplatform codebase** rather than
+maintaining a separate reimplementation.
+
+Success is defined by the MVP in §7.
+
+## 2. Decision: Compose Multiplatform for Web (Kotlin/Wasm)
+
+We add a **`wasmJs` target** to the existing Gradle module and render the UI with
+**Compose Multiplatform for Web** (Skia/`skiko` → canvas). The PWA is a third
+platform target alongside Android and iOS — not a new project.
+
+### Why this fits the project
+
+StreetComplete is already a Kotlin Multiplatform + Compose Multiplatform app,
+mid-migration to run on iOS (funded by the NLnet 2025 grant). The web target is
+the natural continuation of that work, not a detour.
+
+- **Business logic is already shared.** `commonMain` holds ~825 Kotlin files
+  (data, osm, quests, overlays) that run unchanged on web.
+- **The core libraries already target Wasm/JS:** Ktor client, Koin, kotlinx
+  (serialization / coroutines / datetime), multiplatform-settings.
+- **The UI is already unifying on Compose.** `screens/` and `ui/theme` are
+  moving into `commonMain`; the web target consumes that same UI.
+- **Clean platform seams already exist** — e.g. the `Database` interface in
+  `commonMain` (Android supplies `AndroidDatabase` via Koin), and OAuth logic
+  (`data/user/oauth`) is already common.
+
+### Why against the two stated criteria
+
+- **Fast** — Kotlin/Wasm executes near-native in the browser; the heavy OSM data
+  processing (already Kotlin) runs as-is. Compose renders via Skia to a canvas.
+- **Easy to read** — one language across the entire app and the team's existing
+  idioms; no parallel TypeScript reimplementation that silently drifts from the
+  native apps.
+
+### Alternatives considered (for the record)
+
+| Option | Verdict | Reason |
+|---|---|---|
+| **Compose for Web (Wasm)** — *chosen* | ✅ | Max reuse of logic **and** UI; aligned with iOS migration. |
+| Kotlin/JS + web-native DOM UI (React/Svelte) | ⚠️ Rejected for now | Reuses logic but forks the UI away from Compose; better a11y/SEO but doubles UI maintenance. Revisit only if Compose/canvas a11y proves blocking (§8). |
+| Full TypeScript/React rewrite | ❌ Rejected | Reimplements ~800 files of domain logic + every quest; perpetually lags the native apps; discards the funded multiplatform investment. |
+
+## 3. Current architecture snapshot
+
+| Concern | Where it lives today | Web implication |
+|---|---|---|
+| Domain logic (data, osm, quests, overlays) | `commonMain` (~825 files) | Reuse as-is |
+| UI | Compose, migrating `androidMain` → `commonMain` | Reuse shared parts; finish migration for the rest |
+| Quest **forms** | ~383 still in `androidMain` | Must reach `commonMain` to appear on web (also benefits iOS) |
+| HTTP | Ktor client (Android/Darwin engines) | Add `ktor-client-js` engine |
+| DI | Koin | Add a `webMain`/`wasmJsMain` Koin module |
+| Persistence | `Database` interface; `AndroidDatabase` over SQLite | New web `Database` impl (§5.2) |
+| Key–value settings | multiplatform-settings | `StorageSettings` (localStorage) or OPFS-backed |
+| Map | MapLibre Android OpenGL SDK | `maplibre-gl-js` behind the existing map abstraction (§5.1) |
+| Location | `data/location` (common) + Android provider | Browser Geolocation API provider |
+| Auth | `data/user/oauth` (common) | Browser redirect-based OAuth (§5.3) |
+
+## 4. Workstreams & approach
+
+### 5.1 Map rendering — *biggest chunk*
+- Target `maplibre-gl-js` (the web sibling of the Android MapLibre SDK already in
+  use), loaded via JS interop.
+- Reimplement the map component abstractions under `screens/main/map/components/*`
+  (pins, selected pins, tracks, current location, downloaded area, focus geometry,
+  styleable overlay) against the JS map instead of the Android `MapView`.
+- Reuse the existing map **style/scene** assets and tile config where possible.
+- Wrap map interop behind an `expect`/`actual` or DI boundary so `commonMain`
+  code never touches JS types directly.
+
+### 5.2 Persistence
+- Implement the `Database` interface (`commonMain/.../data/Database.kt`) for web.
+- Recommended engine: **SQLite compiled to Wasm** (e.g. `wa-sqlite`) with
+  **OPFS** (Origin Private File System) for durable, high-volume storage — the
+  downloaded OSM data is far too large for `localStorage`/IndexedDB-as-blobs.
+- Provide the impl through a web Koin module, mirroring `AndroidModule`'s
+  `AndroidDatabase(sqLite.writableDatabase)` wiring.
+- Reuse the shared `DatabaseInitializer` / schema.
+- Settings: back multiplatform-settings with `StorageSettings` (small config) —
+  keep bulk data in the SQLite/OPFS store.
+
+### 5.3 Platform APIs
+- **Geolocation** — implement the location provider over the browser Geolocation
+  API + `watchPosition`; feed the existing `data/location` model.
+- **Camera / photos** — `<input type="file" capture>` / `getUserMedia` for quests
+  that attach images; map to the existing photo/attachment flow.
+- **OAuth login** — browser redirect flow to OSM; handle the redirect callback
+  and hand the token to the existing `UserLoginController`. Confirm the OSM app
+  registration allows a web redirect URI.
+- **Background work** — Android uses WorkManager; web has no true background
+  execution. Scope downloads/uploads to foreground + a Service Worker where
+  feasible; document the reduced guarantees.
+
+### 5.4 Quest-form Compose migration
+- ~383 quest/overlay forms remain in `androidMain`. Each must move to
+  `commonMain` Compose to be usable on web.
+- This is shared effort with the iOS migration — coordinate so it is done once.
+- Sequence by usage: migrate the most common quests first to reach a usable MVP
+  before full coverage.
+
+### 5.5 PWA shell & offline
+- Web app manifest (name, icons, theme, display: standalone) for installability.
+- Service Worker to cache the app shell + Wasm/Skia bundle for offline launch.
+- Verify Kotlin/Wasm GC support on target browsers (modern evergreen: OK).
+- Track and budget bundle size (Wasm + skiko can be large) — measure early.
+
+## 5. Build & project setup
+- Add `wasmJs { browser() }` target to `app/build.gradle.kts`; create
+  `wasmJsMain` (and `webMain` if sharing with a future JS target).
+- Add web engine deps: `ktor-client-js`, Compose web/`skiko`, Koin web module.
+- Set up a dev server + production bundling task; wire a CI job that builds the
+  web target.
+- Provide `expect`/`actual` or DI actuals for every current Android-only binding
+  (Database, location, files, HTTP engine, platform flags in `BuildConfig`).
+
+## 6. Milestones
+
+Check off as completed. Each milestone should be independently demoable.
+
+- [ ] **M0 — Spike / walking skeleton.** `wasmJs` target builds; a trivial Compose
+      screen renders in the browser; CI builds the web bundle.
+- [ ] **M1 — Core services on web.** Web `Database` (SQLite+OPFS), settings,
+      Ktor JS engine, Koin web module wired; a headless data flow (e.g. download a
+      small area) works.
+- [ ] **M2 — Map MVP.** `maplibre-gl-js` renders tiles; current-location and pins
+      components ported; pan/zoom works.
+- [ ] **M3 — First quests end-to-end.** A handful of high-frequency quest forms
+      migrated to common Compose; view quest → answer → local edit recorded.
+- [ ] **M4 — Auth + upload.** OSM OAuth redirect login; changeset upload from web.
+- [ ] **M5 — PWA shell.** Manifest + Service Worker; installable; offline app
+      launch; geolocation + photo capture wired.
+- [ ] **M6 — Quest coverage.** Remaining quest/overlay forms migrated (shared with
+      iOS effort); overlays working.
+- [ ] **M7 — Hardening.** Bundle-size budget, performance pass, cross-browser
+      testing, accessibility review, beta release.
+
+## 7. MVP definition (exit criteria for "usable beta")
+
+A logged-in user can, in a modern desktop or mobile browser:
+1. Load the installed PWA and see the map centered on their location.
+2. Download quests for the visible area (persisted offline via OPFS).
+3. Open and answer several common quest types.
+4. Upload the resulting edits to OSM under their account.
+5. Relaunch offline and still see previously downloaded data.
+
+## 8. Risks & open questions
+
+- **Compose/canvas accessibility.** Canvas-rendered UI has weaker a11y/SEO than
+  DOM. Needs an early review; if blocking, the Kotlin/JS + DOM-UI alternative
+  (§2) is the fallback for at least the shell.
+- **Bundle size / cold start.** Wasm + skiko payload; measure at M0 and budget.
+- **OPFS / Wasm-SQLite maturity** across target browsers (esp. iOS Safari).
+- **No real background execution** on web — downloads/uploads are foreground-only;
+  set user expectations.
+- **OSM OAuth web redirect URI** — confirm app registration + CORS for OSM API
+  from the browser origin.
+- **Map feature parity** — AR measuring and some Android-specific map features may
+  be out of scope for web v1.
+- **Ownership & coordination** with upstream StreetComplete: is this an upstream
+  target or a fork? The quest-form migration overlaps heavily with the iOS effort
+  and should be coordinated to avoid duplicate work.
+
+## 9. References
+- Existing multiplatform work: iOS target (`iosApp/`), NLnet 2025 multiplatform grant.
+- Key seams: `app/src/commonMain/.../data/Database.kt`,
+  `app/src/androidMain/.../AndroidModule.kt`, `data/user/oauth/`,
+  `screens/main/map/`.
