@@ -33,8 +33,10 @@ const val WEB_USER_AGENT = "StreetComplete-Web"
  *    gzip content-encoding). The shared API clients take an `HttpClient`, so they will consume
  *    this one directly.
  *
- * Still to come in M1: the web `Database` (Wasm-SQLite + OPFS) — see docs/pwa-port/ROADMAP.md
- * and docs/pwa-port/adr/0001-web-database.md for why that seam is deferred to its own step.
+ * The web `Database` (sql.js + IndexedDB, see data/WebDatabase.kt) is the third M1 seam. Because it
+ * comes up asynchronously (Wasm load + IndexedDB read), it is not declared here but bound into Koin by
+ * `main()` once ready — mirroring `AndroidModule`'s `single { AndroidDatabase(...) }`. See
+ * docs/pwa-port/adr/0001-web-database.md.
  */
 @OptIn(ExperimentalSettingsApi::class)
 val webModule = module {

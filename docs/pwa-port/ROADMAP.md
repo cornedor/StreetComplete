@@ -2,6 +2,8 @@
 
 > Status: **In progress (M1 · M2)**  ·  Owner: _TBD_  ·  Last updated: 2026-07-07
 >
+> _Latest: web `Database` (sql.js + IndexedDB) landed — ADR 0001 resolved (Option 3); see M1._
+>
 > This document plans a Progressive Web App (PWA) build of StreetComplete. It is a
 > living document — update the milestone checkboxes and open questions as work
 > progresses.
@@ -142,10 +144,16 @@ Check off as completed. Each milestone should be independently demoable.
 - [~] **M1 — Core services on web.** _In progress._ Koin web module, `localStorage`-backed
       settings (multiplatform-settings), and a Ktor JS-engine `HttpClient` are wired in `:web`
       and exercised end-to-end by the demo screen (DI-resolved services, a persisted launch
-      counter, and a live OSM API request). The web `Database` (SQLite+OPFS) is intentionally
-      deferred to its own step — the synchronous `Database` interface clashes with browser
-      OPFS/threading; see [`adr/0001-web-database.md`](adr/0001-web-database.md). The headless
-      "download a small area" flow depends on that ADR being resolved.
+      counter, and a live OSM API request). The web **`Database`** now also lands
+      (`web/.../data/WebDatabase.kt`): a synchronous SQLite via [sql.js](https://sql.js.org)
+      (Wasm) with the image persisted to IndexedDB, satisfying the shared, synchronous `Database`
+      interface **unchanged** and bound into Koin like `AndroidModule`'s `AndroidDatabase`. The demo
+      creates a representative slice of the real schema (NoteTable + spatial index, the blob-bearing
+      WayGeometryTable) and round-trips typed rows, a blob, and a reload-surviving counter. This
+      resolves [`adr/0001-web-database.md`](adr/0001-web-database.md) via its Option 3 (in-memory +
+      async IndexedDB flush); the durable-at-scale path (data layer in a Worker over an OPFS
+      sync-access VFS — ADR Option 1) is the follow-up and slots in behind the same interface. The
+      headless "download a small area" flow at full OSM data volume waits on that Option 1 step.
 - [~] **M2 — Map MVP.** _In progress._ `maplibre-gl-js` is wired into `:web` behind a Kotlin
       interop boundary (`web/.../map/WebMap.kt`): a full-screen vector map ([OpenFreeMap
       Liberty](https://openfreemap.org/), keyless/OSM-based) renders with pan/zoom, maplibre's
