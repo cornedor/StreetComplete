@@ -128,8 +128,10 @@ the natural continuation of that work, not a detour.
 
 Check off as completed. Each milestone should be independently demoable.
 
-- [ ] **M0 — Spike / walking skeleton.** `wasmJs` target builds; a trivial Compose
-      screen renders in the browser; CI builds the web bundle.
+- [~] **M0 — Spike / walking skeleton.** _In progress._ Isolated `:web` module added
+      (Compose Multiplatform for Web / Kotlin/Wasm) with a trivial interactive screen,
+      plus a `web-build.yml` CI job. Kept separate from `:app` on purpose (see below).
+      Remaining: confirm a green CI bundle + render check in a browser.
 - [ ] **M1 — Core services on web.** Web `Database` (SQLite+OPFS), settings,
       Ktor JS engine, Koin web module wired; a headless data flow (e.g. download a
       small area) works.
