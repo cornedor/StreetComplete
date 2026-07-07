@@ -1,6 +1,6 @@
 # StreetComplete PWA — Port Roadmap
 
-> Status: **In progress (M1)**  ·  Owner: _TBD_  ·  Last updated: 2026-07-07
+> Status: **In progress (M1 · M2)**  ·  Owner: _TBD_  ·  Last updated: 2026-07-07
 >
 > This document plans a Progressive Web App (PWA) build of StreetComplete. It is a
 > living document — update the milestone checkboxes and open questions as work
@@ -146,14 +146,26 @@ Check off as completed. Each milestone should be independently demoable.
       deferred to its own step — the synchronous `Database` interface clashes with browser
       OPFS/threading; see [`adr/0001-web-database.md`](adr/0001-web-database.md). The headless
       "download a small area" flow depends on that ADR being resolved.
-- [ ] **M2 — Map MVP.** `maplibre-gl-js` renders tiles; current-location and pins
-      components ported; pan/zoom works.
+- [~] **M2 — Map MVP.** _In progress._ `maplibre-gl-js` is wired into `:web` behind a Kotlin
+      interop boundary (`web/.../map/WebMap.kt`): a full-screen vector map ([OpenFreeMap
+      Liberty](https://openfreemap.org/), keyless/OSM-based) renders with pan/zoom, maplibre's
+      navigation (zoom) and geolocate (current-location, over the browser Geolocation API) controls,
+      and a demo pin. All JS/maplibre types stay behind `WebMap`; the rest of the Kotlin code uses
+      plain types (`LatLon`), per §5.1. The Compose overlay drives the map (fly-to buttons) across
+      that boundary, proving Compose ↔ map control without touching JS types. Maplibre loads from a
+      CDN (not yet part of the offline shell — the map degrades gracefully to "no map" if it can't
+      load, so an offline launch still comes up). **Still to port:** the real
+      `screens/main/map/components/*` layers (styleable overlay, quest/selected pins, tracks,
+      downloaded-area, focus geometry) against the JS map, and StreetComplete's own map style — these
+      arrive with the quest work (M3/M6) and the shared-UI migration.
 - [ ] **M3 — First quests end-to-end.** A handful of high-frequency quest forms
       migrated to common Compose; view quest → answer → local edit recorded.
 - [ ] **M4 — Auth + upload.** OSM OAuth redirect login; changeset upload from web.
 - [~] **M5 — PWA shell.** Manifest + Service Worker; installable; offline app
-      launch — _done (walking-skeleton shell, see M0/M5-partial above)_. Geolocation +
-      photo capture still pending (depend on M1/M3).
+      launch — _done (walking-skeleton shell, see M0/M5-partial above)_. **Geolocation** now works
+      via the map's geolocate control (browser Geolocation API, landed with M2); a dedicated
+      location provider feeding the shared `data/location` model still follows with the shared-code
+      wiring. **Photo capture** still pending (depends on M3).
 - [ ] **M6 — Quest coverage.** Remaining quest/overlay forms migrated (shared with
       iOS effort); overlays working.
 - [ ] **M7 — Hardening.** Bundle-size budget, performance pass, cross-browser

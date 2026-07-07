@@ -19,6 +19,16 @@
     <meta name="apple-mobile-web-app-title" content="StreetComplete">
     <link rel="apple-touch-icon" href="icons/icon-192.png">
 
+    <!--
+      maplibre-gl-js (M2 map). Loaded from a CDN so the repo stays lean; this means the map needs
+      network on first use and is not part of the offline shell yet (the tiles need network anyway
+      until offline data / OPFS lands — see docs/pwa-port/ROADMAP.md). Loading it here, before the
+      Wasm bundle below, guarantees the `maplibregl` global exists by the time main() runs; if it
+      is missing (offline), the app detects that and comes up without a map.
+    -->
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+
     <style>
         html, body {
             margin: 0;
@@ -28,9 +38,36 @@
             overflow: hidden;
             font-family: system-ui, -apple-system, sans-serif;
         }
+
+        /* Full-screen base map. */
+        #map {
+            position: absolute;
+            inset: 0;
+            z-index: 0;
+        }
+
+        /*
+          Compose overlay: a fixed control card in the top-left corner. Compose mounts its canvas
+          into this element (not the whole page), so only this card captures pointer events — the
+          rest of the screen stays the interactive map.
+        */
+        #overlay {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            z-index: 10;
+            width: min(92vw, 380px);
+            height: min(60vh, 320px);
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+        }
     </style>
 </head>
 <body>
+    <div id="map"></div>
+    <div id="overlay"></div>
+
     <script src="streetcomplete-web.js"></script>
     <script>
         // Register the service worker so the installed PWA launches offline (see sw.js).
