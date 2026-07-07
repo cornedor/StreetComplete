@@ -1,8 +1,9 @@
 # `:web` — StreetComplete PWA
 
 The **Compose Multiplatform for Web (Kotlin/Wasm)** target of StreetComplete. It started as
-the milestone **M0** walking skeleton — proving the web toolchain end to end — and is now
-growing the **M1** platform services that the shared `:app` code will plug into. See the
+the milestone **M0** walking skeleton — proving the web toolchain end to end — grew the **M1**
+platform services that the shared `:app` code will plug into, and now has an **M2** map
+(maplibre-gl-js) rendering with pan/zoom and current-location. See the
 [PWA port roadmap](../docs/pwa-port/ROADMAP.md).
 
 ## Why it's isolated from `:app`
@@ -40,8 +41,10 @@ toolchain used by the Kotlin/Wasm browser tooling.
 | `build.gradle.kts` | wasmJs target + Compose for Web + M1 service deps |
 | `src/wasmJsMain/kotlin/.../Main.kt` | entry point; starts Koin, then mounts Compose |
 | `src/wasmJsMain/kotlin/.../di/WebModule.kt` | Koin module: settings + HTTP client (M1) |
-| `src/wasmJsMain/kotlin/.../App.kt` | demo screen exercising the M1 services |
-| `src/wasmJsMain/resources/index.html` | host page that loads the Wasm bundle + registers the service worker |
+| `src/wasmJsMain/kotlin/.../map/WebMap.kt` | maplibre-gl-js interop boundary + `WebMap` wrapper (M2) |
+| `src/wasmJsMain/kotlin/.../map/LatLon.kt` | local coordinate type mirroring the shared `LatLon` |
+| `src/wasmJsMain/kotlin/.../App.kt` | overlay UI exercising the M1 services + driving the M2 map |
+| `src/wasmJsMain/resources/index.html` | host page: loads maplibre + the Wasm bundle, registers the service worker |
 | `src/wasmJsMain/resources/manifest.webmanifest` | web app manifest (name, icons, theme, `display: standalone`) |
 | `src/wasmJsMain/resources/sw.js` | service worker; caches the app shell + bundle for offline launch |
 | `src/wasmJsMain/resources/icons/` | app icons (reused from the Android launcher icon) |
@@ -90,7 +93,30 @@ Worker-only OPFS access. The trade-offs and the recommended path are captured in
 > build can't resolve them locally — rely on the `web-build.yml` CI job (unrestricted
 > network) to build and verify the wasmJs bundle.
 
-## Next (M1 cont. / M2)
+## M2 — the map
 
-Resolve ADR 0001 and implement the web `Database`, then wire the first shared `:app` services
-against these bindings. See [`docs/pwa-port/ROADMAP.md`](../docs/pwa-port/ROADMAP.md).
+`maplibre-gl-js` (the web sibling of the Android MapLibre SDK) renders a full-screen vector map,
+with the Compose UI in a small overlay card on top of it.
+
+- **Interop boundary** (`map/WebMap.kt`) — the roadmap (§5.1) asks that `commonMain` code never
+  touch JS types. All maplibre calls live behind `WebMap`: the `js(...)` interop functions are the
+  only code that references the `maplibregl` global, and object handles cross the boundary as
+  opaque `JsAny`. Everything else talks to `WebMap` in plain Kotlin types (`LatLon`, `Double`,
+  `String`). The Compose overlay's "fly to" buttons drive the map through this wrapper.
+- **What works** — pan/zoom, maplibre's navigation (zoom) control, and its geolocate control
+  (current location via the browser Geolocation API), plus a demo pin. The base style is
+  [OpenFreeMap](https://openfreemap.org/) Liberty (keyless, sign-up-free, OpenStreetMap-based); it
+  is a single swappable constant in `Main.kt`.
+- **Loading + offline** — maplibre loads from a CDN (`unpkg`) to keep the repo lean, so it is not
+  part of the offline shell yet (map tiles need network anyway until offline data / OPFS lands). If
+  it can't load, the app detects that and comes up **without** a map rather than crashing, so the
+  offline shell launch does not regress.
+
+Still to port (with the quest work in M3/M6 and the shared-UI migration): the real
+`screens/main/map/components/*` layers (styleable overlay, quest / selected pins, tracks,
+downloaded-area, focus geometry) against the JS map, and StreetComplete's own map style.
+
+## Next
+
+Resolve ADR 0001 and implement the web `Database` (Wasm-SQLite + OPFS), then wire the first shared
+`:app` services against these bindings. See [`docs/pwa-port/ROADMAP.md`](../docs/pwa-port/ROADMAP.md).

@@ -17,7 +17,7 @@
  *
  * Bump CACHE_VERSION whenever the shell files below change so old caches are evicted.
  */
-const CACHE_VERSION = "streetcomplete-web-v1";
+const CACHE_VERSION = "streetcomplete-web-v2";
 
 // Small, stable files that are safe to pre-cache by name.
 const APP_SHELL = [
