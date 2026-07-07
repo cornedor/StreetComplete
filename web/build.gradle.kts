@@ -69,6 +69,10 @@ kotlin {
                 implementation("io.ktor:ktor-client-core:3.5.0")
                 implementation("io.ktor:ktor-client-js:3.5.0")
                 implementation("io.ktor:ktor-client-encoding:3.5.0")
+                // kotlinx-serialization JSON runtime: used as the value-marshalling format across the
+                // sql.js interop boundary in data/WebDatabase.kt (no compiler plugin needed — only the
+                // runtime JsonElement API is used, not @Serializable codegen).
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
             }
         }
     }

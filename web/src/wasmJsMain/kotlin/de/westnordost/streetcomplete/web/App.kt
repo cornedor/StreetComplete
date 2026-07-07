@@ -24,6 +24,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.russhwolf.settings.ObservableSettings
+import de.westnordost.streetcomplete.web.data.ConflictAlgorithm
+import de.westnordost.streetcomplete.web.data.Database
 import de.westnordost.streetcomplete.web.map.LatLon
 import de.westnordost.streetcomplete.web.map.WebMap
 import io.ktor.client.HttpClient
@@ -109,9 +111,123 @@ fun App(map: WebMap?) {
 
                 // --- Ktor HTTP request (M1) ---
                 OsmApiCheck(httpClient)
+
+                Divider()
+
+                // --- Web Database: sql.js + IndexedDB (M1) ---
+                DatabaseSection()
             }
         }
     }
+}
+
+/**
+ * Exercises the web [Database] (sql.js + IndexedDB, see data/WebDatabase.kt) end-to-end in the
+ * browser: it creates a representative slice of StreetComplete's real schema, round-trips a typed
+ * row and a blob through the synchronous `Database` API, and shows a DB-backed launch counter that
+ * survives reloads — proving the persistence layer, not just the in-memory store.
+ *
+ * The database comes up asynchronously (Wasm load + IndexedDB read), so this observes
+ * [WebDatabaseHolder]: while it is still initializing it says so, and if sql.js could not load
+ * (offline / CDN blocked) it reports "unavailable" rather than hanging — the rest of the app works.
+ */
+@Composable
+private fun DatabaseSection() {
+    Text("Web database (sql.js + IndexedDB):", style = MaterialTheme.typography.body2)
+
+    val ready = WebDatabaseHolder.ready.value
+    val database = WebDatabaseHolder.database.value
+
+    when {
+        !ready -> Text("Initializing…", style = MaterialTheme.typography.body2)
+        database == null -> Text(
+            "Unavailable — sql.js did not load (offline, or its CDN is blocked). The rest of the " +
+                "app still works; only persistence is off.",
+            style = MaterialTheme.typography.body2,
+            color = MaterialTheme.colors.error,
+        )
+        else -> {
+            val report = remember(database) { runDatabaseDemo(database) }
+            for (line in report) {
+                Text("• $line", style = MaterialTheme.typography.body2)
+            }
+        }
+    }
+}
+
+/**
+ * Runs a few operations against the real, synchronous [Database] contract and returns a
+ * human-readable report. Kept deliberately close to how the shared DAOs use the interface: real
+ * table shapes, typed columns, a blob, and conflict-replace upserts.
+ *
+ * Uses `CREATE TABLE IF NOT EXISTS` because — unlike the shared `DatabaseInitializer.onCreate`,
+ * which runs exactly once — this demo re-runs on every load against the persisted database.
+ */
+private fun runDatabaseDemo(db: Database): List<String> = try {
+    val lines = mutableListOf<String>()
+
+    // A representative slice of the real schema: NoteTable + its spatial index, and the
+    // blob-bearing WayGeometryTable (verbatim column shapes from app/.../data/**).
+    db.exec(
+        "CREATE TABLE IF NOT EXISTS osm_notes (" +
+            "note_id int PRIMARY KEY, latitude double NOT NULL, longitude double NOT NULL, " +
+            "note_created int NOT NULL, note_closed int, note_status varchar(255) NOT NULL, " +
+            "comments text NOT NULL, last_sync int NOT NULL)"
+    )
+    db.exec("CREATE INDEX IF NOT EXISTS osm_notes_spatial_index ON osm_notes (latitude, longitude)")
+    db.exec(
+        "CREATE TABLE IF NOT EXISTS elements_geometry_ways (" +
+            "id int PRIMARY KEY, geometry_polylines blob, geometry_polygons blob, " +
+            "latitude double NOT NULL, longitude double NOT NULL)"
+    )
+    db.exec("CREATE TABLE IF NOT EXISTS web_launches (id int PRIMARY KEY, n int NOT NULL)")
+    lines += "Schema created (osm_notes + index, elements_geometry_ways, web_launches)."
+
+    // DB-backed launch counter — proves the image is persisted to IndexedDB and reloaded.
+    val previous = db.queryOne(
+        "web_launches", columns = arrayOf("n"), where = "id = ?", args = arrayOf<Any>(1)
+    ) { it.getInt("n") }
+    val count = if (previous == null) {
+        db.insert("web_launches", listOf("id" to 1, "n" to 1)); 1
+    } else {
+        db.update("web_launches", listOf("n" to previous + 1), "id = ?", arrayOf<Any>(1)); previous + 1
+    }
+    lines += "Opened $count ${if (count == 1) "time" else "times"} (persisted in SQLite → IndexedDB)."
+
+    // Typed-row round-trip through insert + query (note_closed left NULL to exercise nullables).
+    db.insert(
+        "osm_notes",
+        listOf(
+            "note_id" to 1L, "latitude" to 52.5200, "longitude" to 13.4050,
+            "note_created" to 1_700_000_000L, "note_status" to "open",
+            "comments" to "[]", "last_sync" to 0L,
+        ),
+        ConflictAlgorithm.REPLACE,
+    )
+    val note = db.queryOne("osm_notes", where = "note_id = ?", args = arrayOf<Any>(1L)) {
+        Triple(it.getDouble("latitude"), it.getStringOrNull("note_status"), it.getLongOrNull("note_closed"))
+    }
+    lines += "Row round-trip: lat=${note?.first}, status=${note?.second}, closed=${note?.third}."
+
+    // Blob round-trip (the geometry columns are BLOBs; verify the bytes survive the JSON boundary).
+    val blob = byteArrayOf(0, 1, 2, 3, 126, 127, -1, -128, 42)
+    db.insert(
+        "elements_geometry_ways",
+        listOf(
+            "id" to 1L, "geometry_polylines" to blob, "geometry_polygons" to null,
+            "latitude" to 52.52, "longitude" to 13.40,
+        ),
+        ConflictAlgorithm.REPLACE,
+    )
+    val readBlob = db.queryOne(
+        "elements_geometry_ways", columns = arrayOf("geometry_polylines"), where = "id = ?", args = arrayOf<Any>(1L)
+    ) { it.getBlobOrNull("geometry_polylines") }
+    val blobOk = readBlob != null && readBlob.contentEquals(blob)
+    lines += "Blob round-trip (${blob.size} bytes): ${if (blobOk) "OK — bytes match" else "FAILED"}."
+
+    lines
+} catch (e: Throwable) {
+    listOf("Database demo failed: ${e.message ?: e::class.simpleName}")
 }
 
 /** A button that pings the OSM API over Ktor's JS engine and reports the outcome. */

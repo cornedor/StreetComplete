@@ -1,6 +1,13 @@
 # ADR 0001 — Web persistence: the synchronous `Database` interface vs. the browser
 
-> Status: **Proposed** · Milestone: M1 · Last updated: 2026-07-07
+> Status: **Accepted** · Milestone: M1 · Last updated: 2026-07-07
+>
+> **Update (implemented):** the first working web `Database` has landed in `:web`
+> ([`web/.../data/WebDatabase.kt`](../../../web/src/wasmJsMain/kotlin/de/westnordost/streetcomplete/web/data/WebDatabase.kt))
+> taking **Option 3** (below) as the pragmatic first step: synchronous in-memory Wasm-SQLite with
+> asynchronous whole-image persistence to IndexedDB. **Option 1** (the data layer in a Worker over an
+> OPFS sync-access VFS) remains the target for durable-at-scale storage and will replace the
+> implementation behind the same `Database` interface. See the updated Decision and Consequences.
 
 ## Context
 
@@ -43,30 +50,54 @@ communicates asynchronously with the main thread).
 
 ## Decision
 
-**Deferred — do not implement the web `Database` in the same step as the other M1 services.**
+**Ship Option 3 now as the first working web `Database`; keep Option 1 as the durable-at-scale
+target.**
 
-Option 1 (data layer in a Worker) is the current front-runner because it preserves the
-synchronous `Database` contract and therefore maximizes reuse of the shared code — the whole
-point of the port. But it is a substantial, standalone piece of work (Worker bootstrap,
-Wasm-SQLite + OPFS VFS wiring, a UI↔Worker RPC boundary) and it interacts with the
-threading model of the entire app. It deserves its own milestone step and its own
-verification, rather than being rushed in alongside settings/HTTP/DI.
+The earlier revision of this ADR deferred the web `Database` entirely, so that settings/HTTP/DI
+could ship first without being blocked on the persistence question. Those shipped. This revision
+takes the next step and **implements** the seam.
 
-The rest of M1 — Koin, `localStorage`-backed settings, and the Ktor JS client — is
-independent of this decision and ships first (see the `:web` module). Those are exactly the
-services that do **not** depend on how bulk persistence is solved.
+The choice is **Option 3 — synchronous in-memory Wasm-SQLite with async persistence** — realised
+with [sql.js](https://sql.js.org) on the main thread and the database image flushed to **IndexedDB**
+(not OPFS) after each mutation. The reasoning:
+
+- **It satisfies the synchronous `Database` contract today, unchanged.** Once `initSqlJs()` has
+  loaded (awaited once at startup), every sql.js call is genuinely synchronous — `query` returns a
+  `List`, `insert` returns a `Long` — so the whole shared interface and all its callers are reused
+  verbatim, which is the point of the port. No Worker, no RPC boundary, no interface change.
+- **It is self-contained in `:web` and verifiable now**, matching how every other web service came
+  online one at a time. Option 1's Worker bootstrap + OPFS VFS + UI↔Worker RPC is a much larger,
+  threading-sensitive piece that would have blocked any web persistence for far longer.
+- **Its ceiling is understood.** The whole database lives in memory and is persisted as one image,
+  so it is right for the preview and moderate data but **not** for the full downloaded OSM dataset
+  (the very reason the roadmap picked OPFS). That is an explicit, documented limit — not a surprise.
+
+**Option 1 (data layer in a Worker over an OPFS sync-access VFS) remains the target** for
+durable-at-scale storage. Because Option 3 keeps the exact synchronous `Database` interface, Option 1
+can later replace the implementation behind that same seam without touching any caller. Option 2
+(async `Database`) stays the fallback if the Worker RPC boundary proves too heavy, to be coordinated
+with the iOS migration.
 
 ## Consequences
 
-- `webModule` provides `ObservableSettings` and `HttpClient` now; it does **not** yet bind a
-  `Database`. The "headless data flow (download a small area)" M1 exit criterion depends on
-  this ADR being resolved and implemented.
-- Before implementing, spike **Option 1** end-to-end: a Worker that opens a Wasm-SQLite DB on
-  an OPFS-backed VFS, runs the shared `DatabaseInitializer` schema, and round-trips a few
-  rows. Confirm OPFS + sync access handles behave on the target browsers — **especially iOS
-  Safari**, called out as a maturity risk in the roadmap (§8).
-- If the Worker RPC boundary proves too heavy, revisit Option 2 (async `Database`) as the
-  cross-platform direction, coordinating with the iOS migration.
+- `webModule`-adjacent wiring now binds a `Database`: [`main`](../../../web/src/wasmJsMain/kotlin/de/westnordost/streetcomplete/web/Main.kt)
+  bootstraps `WebDatabase` asynchronously and, once ready, loads it into Koin (mirroring
+  `AndroidModule`'s `single { AndroidDatabase(...) }`). The demo screen exercises it end-to-end:
+  representative real schema (NoteTable + spatial index, the blob-bearing WayGeometryTable), a typed
+  row round-trip, a **blob** round-trip, and a DB-backed launch counter that survives reloads.
+- **Bulk `Database` binding is present, but the "download a small area" flow at full data volume
+  still wants Option 1.** The in-memory ceiling means a real OSM download is not yet in scope; that
+  arrives with the Worker/OPFS follow-up.
+- sql.js loads from a CDN (like maplibre) and is **not** part of the offline shell yet; if it is
+  absent (offline / CDN blocked) the app comes up **without** persistence rather than crashing —
+  the same graceful-degradation contract as the map.
+- **iOS Safari / OPFS maturity** (roadmap §8) is deliberately side-stepped for now: IndexedDB is
+  broadly supported, so Option 3 avoids the OPFS + sync-access-handle risk. That risk returns with
+  Option 1 and must be spiked there — a Worker that opens a Wasm-SQLite DB on an OPFS-backed VFS,
+  runs the shared `DatabaseInitializer` schema, and round-trips rows on the target browsers.
+- **Large-integer precision:** sql.js returns integers as JS numbers, so values beyond 2^53 lose
+  precision. Current OSM ids are within range; revisit (BigInt-capable build, or Option 1) before
+  relying on it for larger ids.
 
 ## References
 

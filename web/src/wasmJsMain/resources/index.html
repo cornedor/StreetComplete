@@ -29,6 +29,16 @@
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
     <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 
+    <!--
+      sql.js (M1 web database). SQLite compiled to WebAssembly, loaded from a CDN like maplibre so
+      the repo stays lean. It defines the global `initSqlJs`, which data/WebDatabase.kt calls to open
+      an in-memory SQLite database (persisted to IndexedDB); the wasm binary (`sql-wasm.wasm`) is
+      fetched from the same CDN dir on first use. Not part of the offline shell yet — if it is absent
+      (offline / CDN blocked) the app detects that and comes up without persistence rather than
+      crashing. Keep this version in sync with CDN_BASE in data/WebDatabase.kt.
+    -->
+    <script src="https://unpkg.com/sql.js@1.13.0/dist/sql-wasm.js"></script>
+
     <style>
         html, body {
             margin: 0;
