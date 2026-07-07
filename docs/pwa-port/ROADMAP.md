@@ -1,6 +1,6 @@
 # StreetComplete PWA — Port Roadmap
 
-> Status: **Planning**  ·  Owner: _TBD_  ·  Last updated: 2026-07-07
+> Status: **In progress (M1)**  ·  Owner: _TBD_  ·  Last updated: 2026-07-07
 >
 > This document plans a Progressive Web App (PWA) build of StreetComplete. It is a
 > living document — update the milestone checkboxes and open questions as work
@@ -139,9 +139,13 @@ Check off as completed. Each milestone should be independently demoable.
       first load. Brought forward from M5 because it is low-risk, self-contained in
       `:web`, and independent of the core-services work. Remaining M5 items (geolocation,
       photo capture) still depend on M1/M3.
-- [ ] **M1 — Core services on web.** Web `Database` (SQLite+OPFS), settings,
-      Ktor JS engine, Koin web module wired; a headless data flow (e.g. download a
-      small area) works.
+- [~] **M1 — Core services on web.** _In progress._ Koin web module, `localStorage`-backed
+      settings (multiplatform-settings), and a Ktor JS-engine `HttpClient` are wired in `:web`
+      and exercised end-to-end by the demo screen (DI-resolved services, a persisted launch
+      counter, and a live OSM API request). The web `Database` (SQLite+OPFS) is intentionally
+      deferred to its own step — the synchronous `Database` interface clashes with browser
+      OPFS/threading; see [`adr/0001-web-database.md`](adr/0001-web-database.md). The headless
+      "download a small area" flow depends on that ADR being resolved.
 - [ ] **M2 — Map MVP.** `maplibre-gl-js` renders tiles; current-location and pins
       components ported; pan/zoom works.
 - [ ] **M3 — First quests end-to-end.** A handful of high-frequency quest forms

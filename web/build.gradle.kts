@@ -1,13 +1,20 @@
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 
 /**
- * StreetComplete PWA — walking skeleton (milestone M0 of docs/pwa-port/ROADMAP.md).
+ * StreetComplete PWA — web target (milestones M0–M1 of docs/pwa-port/ROADMAP.md).
  *
  * This is an intentionally isolated Compose Multiplatform for Web (Kotlin/Wasm) module.
- * It does NOT depend on `:app` yet: the point of M0 is to prove the web toolchain
- * (Kotlin/Wasm + Compose for Web + browser bundling + CI) end-to-end, without forcing
- * the whole `commonMain` codebase and every dependency/expect to compile for wasmJs.
- * Reuse of the shared `:app` code starts in M1 (see the roadmap).
+ * It does NOT depend on `:app` yet: forcing the whole `commonMain` codebase and every
+ * dependency/expect to compile for wasmJs is the larger M1+ effort. Keeping this module
+ * separate lets us bring the web *platform services* online one at a time — proving each
+ * against the browser — before wiring them to the shared code.
+ *
+ * M1 (in progress) adds the web-side platform services the shared `:app` code will plug
+ * into: Koin DI, key–value settings over `localStorage` (multiplatform-settings), and a
+ * Ktor HTTP client on the JS engine. These are exercised end-to-end by the demo screen so
+ * the plumbing is verified in a real browser. The versions below intentionally match the
+ * ones `:app` already uses (see app/build.gradle.kts) so nothing has to change when the
+ * shared modules start compiling for wasmJs.
  *
  * Plugin versions are intentionally omitted — they are declared once, with `apply false`,
  * in the root build.gradle.kts.
@@ -46,6 +53,22 @@ kotlin {
                 implementation("org.jetbrains.compose.ui:ui:1.11.1")
                 // browser globals (document, window) for the Compose entrypoint
                 implementation("org.jetbrains.kotlinx:kotlinx-browser:0.3")
+
+                // --- M1 platform services (versions match app/build.gradle.kts) ---
+                // Coroutines: async plumbing for HTTP + UI-driven flows
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+                // Koin: the same DI container the shared code registers its modules in
+                implementation(project.dependencies.platform("io.insert-koin:koin-bom:4.2.2"))
+                implementation("io.insert-koin:koin-core")
+                // Key–value settings: `StorageSettings` is a localStorage-backed `Settings`;
+                // `.makeObservable()` (make-observable artifact) wraps it as the
+                // `ObservableSettings` the shared `Preferences` class depends on.
+                implementation("com.russhwolf:multiplatform-settings:1.3.0")
+                implementation("com.russhwolf:multiplatform-settings-make-observable:1.3.0")
+                // Ktor on the JS engine: the web sibling of the Android/Darwin engines
+                implementation("io.ktor:ktor-client-core:3.5.0")
+                implementation("io.ktor:ktor-client-js:3.5.0")
+                implementation("io.ktor:ktor-client-encoding:3.5.0")
             }
         }
     }
