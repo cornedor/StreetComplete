@@ -4,10 +4,11 @@ The **Compose Multiplatform for Web (Kotlin/Wasm)** target of StreetComplete. It
 the milestone **M0** walking skeleton — proving the web toolchain end to end — grew the **M1**
 platform services that the shared `:app` code plugs into (DI, settings, HTTP, and a synchronous
 **`Database`** via sql.js + IndexedDB), and has an **M2** map (maplibre-gl-js) rendering with
-pan/zoom and current-location. Most recently, the **first real slice of `:app`'s shared
-`commonMain` compiles and runs on wasm** — the demo downloads a live OSM area and parses it with the
-**real shared `MapDataApiParser`** into the real shared model (see "Shared-source bridge" below).
-See the [PWA port roadmap](../docs/pwa-port/ROADMAP.md).
+pan/zoom and current-location. The **first real slice of `:app`'s shared `commonMain` compiles and
+runs on wasm** (see "Shared-source bridge" below), and that shared parser now **feeds the map**: the
+demo downloads the map's **visible viewport**, parses it with the **real shared `MapDataApiParser`**,
+and **draws the parsed shared `MapData` on the map** — the first real map component consuming shared
+`MapData`. See the [PWA port roadmap](../docs/pwa-port/ROADMAP.md).
 
 ## Why it's isolated from `:app`
 
@@ -162,11 +163,15 @@ and this bridge is deleted.
 The first slice is the **OSM data core**: the element model
 (`Element`/`Node`/`Way`/`Relation`/`LatLon`…), `BoundingBox`, `MapData`/`MutableMapData`, the element
 geometry model, the spherical-earth math, and the **`MapDataApiParser`**. The demo (`App.kt`,
-"Download & parse area") runs it end-to-end: the real `BoundingBox.toOsmApiString()` builds an OSM
-`bbox` query, a live `/api/0.6/map` download is parsed by the real shared parser into the real
-`MutableMapData` — ~900 nodes / ~90 ways / ~100 relations from a ~150 m Berlin area, multi-byte names
-("Straße", "Dom-Aquarée") intact. With the real `LatLon` now compiled, the `map/LatLon.kt` mirror is
-deleted; `WebMap` uses the shared type.
+"Download & render visible area") runs it end-to-end **and onto the map**: `WebMap.getBounds()` gives
+the visible viewport as the shared `BoundingBox`, its real `toOsmApiString()` builds the OSM `bbox`
+query, a live `/api/0.6/map` download is parsed by the real shared parser into the real `MutableMapData`,
+and `map/MapDataGeoJson.kt` turns that shared model into GeoJSON (ways → `LineString`s, tagged nodes →
+`Point`s) which `WebMap.setMapData()` draws. Verified in-browser: a full zoom-16 viewport of central
+Berlin (~16 MB of live OSM XML, multi-byte names intact) parses on wasm and renders thousands of ways
++ nodes precisely over the base map. With the real `LatLon` now compiled, the `map/LatLon.kt` mirror is
+deleted; `WebMap` uses the shared type. The GeoJSON is built by hand rather than via
+`ElementGeometryCreator`, which would pull in `osmfeatures` (no wasmJs target).
 
 > **One shared-code change was needed** (additive): on wasm, xmlutil's byte-`Source` XML reader aborts
 > at the first multi-byte UTF-8 character, so `MapDataApiParser` gained a `CharSequence` overload that

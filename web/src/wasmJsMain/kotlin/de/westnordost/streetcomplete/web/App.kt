@@ -31,6 +31,7 @@ import de.westnordost.streetcomplete.data.osm.mapdata.toOsmApiString
 import de.westnordost.streetcomplete.web.data.ConflictAlgorithm
 import de.westnordost.streetcomplete.web.data.Database
 import de.westnordost.streetcomplete.web.map.WebMap
+import de.westnordost.streetcomplete.web.map.toGeoJson
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
@@ -79,8 +80,9 @@ fun App(map: WebMap?) {
             ) {
                 Text("StreetComplete Web", style = MaterialTheme.typography.h6)
                 Text(
-                    "M2 — map preview. maplibre-gl-js renders below; pan, zoom and the " +
-                        "locate button (top-right) work.",
+                    "M2 — map preview. maplibre-gl-js renders below; pan, zoom and the locate " +
+                        "button (top-right) work. Scroll down to download the visible area and draw " +
+                        "the real shared-parser output on the map.",
                     style = MaterialTheme.typography.caption,
                 )
 
@@ -122,26 +124,29 @@ fun App(map: WebMap?) {
 
                 Divider()
 
-                // --- Real shared code on wasm: download + parse OSM data (M1/M3 groundwork) ---
-                OsmDownloadParseSection(httpClient)
+                // --- Real shared code on wasm: download + parse + render OSM data (M1/M2/M3) ---
+                OsmDownloadParseSection(httpClient, map)
             }
         }
     }
 }
 
 /**
- * Downloads a small OpenStreetMap area and parses it with the **real, shared**
- * [MapDataApiParser] — the exact class the Android/iOS apps use — running here compiled to wasm.
+ * Downloads an OpenStreetMap area, parses it with the **real, shared** [MapDataApiParser] — the
+ * exact class the Android/iOS apps use, compiled here to wasm — and **draws the result on the map**.
  *
- * This is the first slice of `:app`'s `commonMain` to run in the browser (see the source bridge in
- * web/build.gradle.kts and docs/pwa-port/adr/0002-shared-source-on-wasm.md). The whole pipeline is
- * shared domain code: the [BoundingBox] builds the OSM `bbox` query string via its real
- * `toOsmApiString()`, the response XML is parsed by the shared parser into the shared model
- * ([de.westnordost.streetcomplete.data.osm.mapdata.MutableMapData] of `Node`/`Way`/`Relation`), and
- * we report what came back. It is a concrete step toward MVP §7.2 ("download data for the area").
+ * This closes the loop between the two things that already worked in isolation: the shared parser
+ * (M1) and the maplibre map (M2). When a [map] is present the download targets its **visible
+ * viewport** ([WebMap.getBounds]) and the parsed [de.westnordost.streetcomplete.data.osm.mapdata.MapData]
+ * is rendered as GeoJSON via [WebMap.setMapData] — the first real map component that consumes shared
+ * `MapData` (roadmap §5.1), and a concrete step toward MVP §7.2 ("download data for the area"). With
+ * no map (offline / CDN blocked) it falls back to the fixed [DEMO_BBOX] and just parses + reports.
+ *
+ * The whole pipeline is shared domain code: [BoundingBox] builds the OSM `bbox` query via its real
+ * `toOsmApiString()`, and the shared parser produces the real model of `Node`/`Way`/`Relation`.
  */
 @Composable
-private fun OsmDownloadParseSection(httpClient: HttpClient) {
+private fun OsmDownloadParseSection(httpClient: HttpClient, map: WebMap?) {
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf("") }
     var report by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -149,8 +154,13 @@ private fun OsmDownloadParseSection(httpClient: HttpClient) {
 
     Text("Shared OSM parser on wasm:", style = MaterialTheme.typography.body2)
     Text(
-        "Downloads a ~150 m area of central Berlin and parses it with the real shared " +
-            "MapDataApiParser (the same class the Android/iOS apps use).",
+        if (map != null) {
+            "Downloads the map's visible area, parses it with the real shared MapDataApiParser " +
+                "(the same class the Android/iOS apps use), and draws it on the map. Zoom in first."
+        } else {
+            "Downloads a ~150 m area of central Berlin and parses it with the real shared " +
+                "MapDataApiParser (the same class the Android/iOS apps use)."
+        },
         style = MaterialTheme.typography.caption,
     )
     Button(
@@ -161,7 +171,7 @@ private fun OsmDownloadParseSection(httpClient: HttpClient) {
             report = emptyList()
             scope.launch {
                 try {
-                    report = downloadAndParseOsmArea(httpClient)
+                    report = downloadParseAndRender(httpClient, map)
                     status = ""
                 } catch (e: Throwable) {
                     // A CORS/network failure, or a parser/model error, surfaces here.
@@ -172,7 +182,7 @@ private fun OsmDownloadParseSection(httpClient: HttpClient) {
             }
         },
     ) {
-        Text("Download & parse area")
+        Text(if (map != null) "Download & render visible area" else "Download & parse area")
     }
     if (status.isNotEmpty()) {
         Spacer(Modifier.height(4.dp))
@@ -184,14 +194,26 @@ private fun OsmDownloadParseSection(httpClient: HttpClient) {
 }
 
 /**
- * Fetches [DEMO_BBOX] from the OSM API and runs it through the shared [MapDataApiParser], returning
- * a human-readable report of the parsed [de.westnordost.streetcomplete.data.osm.mapdata.MapData].
+ * Fetches an area from the OSM API, parses it with the shared [MapDataApiParser], and — when a
+ * [map] is given — renders the parsed [de.westnordost.streetcomplete.data.osm.mapdata.MapData] on
+ * it. Returns a human-readable report. The bbox is the map's visible viewport (or [DEMO_BBOX] if
+ * there is no map / its bounds can't be read).
  */
-private suspend fun downloadAndParseOsmArea(httpClient: HttpClient): List<String> {
+private suspend fun downloadParseAndRender(httpClient: HttpClient, map: WebMap?): List<String> {
     val lines = mutableListOf<String>()
 
+    val bbox = map?.getBounds() ?: DEMO_BBOX
+
+    // The OSM /map endpoint rejects bboxes above 0.25 deg², and a large area would be a heavy
+    // in-browser parse+render anyway. Guard with a demo-friendly cap and a clear "zoom in" message
+    // rather than surfacing an opaque HTTP 400.
+    val area = (bbox.max.latitude - bbox.min.latitude) * (bbox.max.longitude - bbox.min.longitude)
+    if (area > MAX_DOWNLOAD_AREA_DEG2) {
+        return listOf("Visible area too large to download — zoom in and try again.")
+    }
+
     // Build the bbox query with the shared BoundingBox.toOsmApiString() (minLon,minLat,maxLon,maxLat).
-    val url = "$OSM_API_BASE/map?bbox=${DEMO_BBOX.toOsmApiString()}"
+    val url = "$OSM_API_BASE/map?bbox=${bbox.toOsmApiString()}"
     val xml = httpClient.get(url).bodyAsText()
     lines += "Downloaded ${xml.length} chars of OSM XML."
 
@@ -201,6 +223,13 @@ private suspend fun downloadAndParseOsmArea(httpClient: HttpClient): List<String
     val mapData = MapDataApiParser().parseMapData(xml)
     lines += "Parsed: ${mapData.nodes.size} nodes, ${mapData.ways.size} ways, " +
         "${mapData.relations.size} relations."
+
+    // Draw the parsed model on the real map — ways as lines, tagged nodes as points (see toGeoJson).
+    if (map != null) {
+        map.setMapData(mapData.toGeoJson())
+        lines += "Rendered ways + tagged nodes on the map."
+    }
+
     val named = mapData.mapNotNull { el -> el.tags["name"]?.let { "${el.type.name.lowercase()}: $it" } }
         .distinct()
         .take(5)
@@ -358,11 +387,17 @@ private val DEMO_PLACES = listOf(
     "Paris" to LatLon(48.8566, 2.3522),
     "Tokyo" to LatLon(35.6762, 139.6503),
 )
-private const val DEMO_PLACE_ZOOM = 12.0
+private const val DEMO_PLACE_ZOOM = 16.0
 
 private const val KEY_LAUNCH_COUNT = "web.demo.launchCount"
 private const val OSM_API_BASE = "https://api.openstreetmap.org/api/0.6"
 private const val OSM_API_CAPABILITIES_URL = "$OSM_API_BASE/capabilities"
+
+/** Cap on the downloadable viewport (deg²). Well below OSM's hard 0.25 limit: a full desktop
+ *  viewport at zoom 16 over dense inner city is already ~0.001 deg² / ~16 MB of XML, so this leaves
+ *  a little headroom (down to ~zoom 15) while a more zoomed-out view is asked to zoom in — otherwise
+ *  the in-browser download + parse + render would be needlessly heavy. */
+private const val MAX_DOWNLOAD_AREA_DEG2 = 0.004
 
 /** A tiny (~150 m) area of central Berlin to download & parse — small enough to keep the request
  *  and in-browser parse light, dense enough to return real nodes, ways and named features. */

@@ -1,10 +1,12 @@
 # StreetComplete PWA — Port Roadmap
 
-> Status: **In progress (M1 · M2)**  ·  Owner: _TBD_  ·  Last updated: 2026-07-07
+> Status: **In progress (M1 · M2)**  ·  Owner: _TBD_  ·  Last updated: 2026-07-08
 >
-> _Latest: the first real slice of `:app`'s shared `commonMain` now compiles **and runs** on wasm —
-> the web demo downloads a live OSM area and parses it with the **real shared `MapDataApiParser`** into
-> the real shared model. See M1 and [`adr/0002-shared-source-on-wasm.md`](adr/0002-shared-source-on-wasm.md)._
+> _Latest: the shared parser (M1) and the maplibre map (M2) are now **connected** — the web demo
+> downloads the map's **visible viewport**, parses it with the **real shared `MapDataApiParser`**, and
+> **draws the parsed shared `MapData` on the map** (ways as lines, tagged nodes as points). This is the
+> first real map component consuming shared `MapData`. See M2 and
+> [`adr/0002-shared-source-on-wasm.md`](adr/0002-shared-source-on-wasm.md)._
 >
 > This document plans a Progressive Web App (PWA) build of StreetComplete. It is a
 > living document — update the milestone checkboxes and open questions as work
@@ -177,16 +179,29 @@ Check off as completed. Each milestone should be independently demoable.
       plain types (`LatLon`), per §5.1. The Compose overlay drives the map (fly-to buttons) across
       that boundary, proving Compose ↔ map control without touching JS types. Maplibre loads from a
       CDN (not yet part of the offline shell — the map degrades gracefully to "no map" if it can't
-      load, so an offline launch still comes up). **Still to port:** the real
-      `screens/main/map/components/*` layers (styleable overlay, quest/selected pins, tracks,
+      load, so an offline launch still comes up).
+
+      **The shared parser now feeds the map (M1 × M2).** `WebMap` gained `getBounds()` (the visible
+      viewport as the shared `BoundingBox`) and `setMapData(geoJson)` (a GeoJSON source + line/circle
+      layers). The demo's "Download & render visible area" button reads the viewport, downloads that
+      bbox, parses it with the **real shared `MapDataApiParser`**, converts the resulting shared
+      `MapData` to GeoJSON (`web/.../map/MapDataGeoJson.kt`: ways → `LineString`s, tagged nodes →
+      `Point`s), and draws it — the first real map component that consumes shared `MapData` (§5.1).
+      Verified in-browser: a full zoom-16 viewport of central Berlin (~16 MB of live OSM XML) parses on
+      wasm and renders thousands of ways + nodes precisely over the base map, no console errors. The
+      GeoJSON is built by hand from the model on purpose — `ElementGeometryCreator` would pull in
+      `osmfeatures` (no wasmJs target; see ADR 0002). **Still to port:** the real
+      `screens/main/map/components` layers (styleable overlay, quest/selected pins, tracks,
       downloaded-area, focus geometry) against the JS map, and StreetComplete's own map style — these
       arrive with the quest work (M3/M6) and the shared-UI migration.
 - [ ] **M3 — First quests end-to-end.** A handful of high-frequency quest forms
       migrated to common Compose; view quest → answer → local edit recorded.
-      _Groundwork landed: the real shared OSM model + `MapDataApiParser` now compile & run on wasm and
-      parse live OSM data (see M1). **Blocked next step:** the quest/feature layer depends on
-      `osmfeatures`, which has no js/wasmJs target — that must be resolved upstream (or the module
-      vendored) before quest forms can compile for web. See [`adr/0002`](adr/0002-shared-source-on-wasm.md)._
+      _Groundwork landed: the real shared OSM model + `MapDataApiParser` compile & run on wasm, and the
+      demo now **downloads the visible area, parses it with the shared parser, and renders the shared
+      `MapData` on the map** (see M2) — the download-and-show half of MVP §7.2 works end-to-end for the
+      viewport. **Blocked next step:** the quest/feature layer depends on `osmfeatures`, which has no
+      js/wasmJs target — that must be resolved upstream (or the module vendored) before quest forms can
+      compile for web. See [`adr/0002`](adr/0002-shared-source-on-wasm.md)._
 - [ ] **M4 — Auth + upload.** OSM OAuth redirect login; changeset upload from web.
 - [~] **M5 — PWA shell.** Manifest + Service Worker; installable; offline app
       launch — _done (walking-skeleton shell, see M0/M5-partial above)_. **Geolocation** now works

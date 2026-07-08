@@ -1,5 +1,6 @@
 package de.westnordost.streetcomplete.web.map
 
+import de.westnordost.streetcomplete.data.osm.mapdata.BoundingBox
 import de.westnordost.streetcomplete.data.osm.mapdata.LatLon
 import kotlin.js.JsAny
 
@@ -39,6 +40,40 @@ class WebMap private constructor(private val handle: JsAny) {
     /** Recompute the map size after its container changed. */
     fun resize() {
         mlResize(handle)
+    }
+
+    /**
+     * The map's current visible viewport as a shared [BoundingBox] — the seam through which the
+     * shared download logic learns "what area is on screen". maplibre reports west/south/east/north;
+     * we map those onto the shared type's min/max latitude/longitude so no JS coordinate object
+     * escapes this file. Returns `null` if the bounds could not be read (e.g. the map is not yet
+     * ready) rather than throwing.
+     */
+    fun getBounds(): BoundingBox? {
+        // maplibre gives us "west,south,east,north"; parse it into the shared type here so callers
+        // only ever see a BoundingBox (roadmap §5.1: JS types stay behind this boundary).
+        val csv = mlGetBoundsCsv(handle)
+        val p = csv.split(',').mapNotNull { it.toDoubleOrNull() }
+        if (p.size != 4) return null
+        val (west, south, east, north) = p
+        return BoundingBox(
+            minLatitude = south, minLongitude = west,
+            maxLatitude = north, maxLongitude = east,
+        )
+    }
+
+    /**
+     * Render a GeoJSON `FeatureCollection` as the map's data layer, replacing whatever was there
+     * before. Ways come in as `LineString`s and (tagged) nodes as `Point`s — see
+     * [de.westnordost.streetcomplete.web.map.toGeoJson]. This is the first real "map component"
+     * that draws shared [de.westnordost.streetcomplete.data.osm.mapdata.MapData] on the web map
+     * (roadmap §5.1); the ported `screens/main/map/components` layers will grow from here.
+     *
+     * The GeoJSON crosses the interop boundary as a single JSON string (parsed JS-side), which
+     * keeps nested coordinate arrays out of the Kotlin/Wasm interop surface.
+     */
+    fun setMapData(geoJson: String) {
+        mlSetMapData(handle, geoJson)
     }
 
     companion object {
@@ -98,3 +133,39 @@ private fun mlAddMarker(map: JsAny, lng: Double, lat: Double, color: String): Js
 
 private fun mlResize(map: JsAny): JsAny? =
     js("map.resize()")
+
+/** Current viewport as "west,south,east,north" — a plain string so no JS bounds object crosses. */
+private fun mlGetBoundsCsv(map: JsAny): String = js(
+    "(() => { const b = map.getBounds(); return b.getWest()+','+b.getSouth()+','+b.getEast()+','+b.getNorth(); })()"
+)
+
+/**
+ * Add (or update) the `sc-mapdata` GeoJSON source and its line/circle layers from a GeoJSON string.
+ * Adding sources/layers requires the style to be loaded, so on the first call we defer to the map's
+ * `load` event if needed; subsequent calls just replace the source data via `setData`.
+ */
+private fun mlSetMapData(map: JsAny, geoJson: String): JsAny? = js(
+    """(() => {
+        const data = JSON.parse(geoJson);
+        const existing = map.getSource('sc-mapdata');
+        if (existing) { existing.setData(data); return; }
+        const install = () => {
+            if (map.getSource('sc-mapdata')) { map.getSource('sc-mapdata').setData(data); return; }
+            map.addSource('sc-mapdata', { type: 'geojson', data: data });
+            map.addLayer({
+                id: 'sc-mapdata-lines', type: 'line', source: 'sc-mapdata',
+                filter: ['==', ['geometry-type'], 'LineString'],
+                paint: { 'line-color': '#D14841', 'line-width': 2, 'line-opacity': 0.8 },
+            });
+            map.addLayer({
+                id: 'sc-mapdata-points', type: 'circle', source: 'sc-mapdata',
+                filter: ['==', ['geometry-type'], 'Point'],
+                paint: {
+                    'circle-radius': 4, 'circle-color': '#D14841',
+                    'circle-stroke-width': 1, 'circle-stroke-color': '#ffffff',
+                },
+            });
+        };
+        if (map.isStyleLoaded()) install(); else map.once('load', install);
+    })()"""
+)

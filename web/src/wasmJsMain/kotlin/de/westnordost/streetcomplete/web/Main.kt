@@ -89,6 +89,7 @@ private const val DB_NAME = "streetcomplete"
  */
 private const val DEFAULT_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
 
-/** Where the map opens: central Berlin (home of the OSM community), zoomed to street level. */
+/** Where the map opens: central Berlin (home of the OSM community). Zoom 16 is StreetComplete's own
+ *  quest display/download zoom, so the "download & render visible area" demo works out of the box. */
 private val INITIAL_CENTER = LatLon(52.5200, 13.4050)
-private const val INITIAL_ZOOM = 13.0
+private const val INITIAL_ZOOM = 16.0
