@@ -2,7 +2,9 @@
 
 > Status: **In progress (M1 · M2)**  ·  Owner: _TBD_  ·  Last updated: 2026-07-07
 >
-> _Latest: web `Database` (sql.js + IndexedDB) landed — ADR 0001 resolved (Option 3); see M1._
+> _Latest: the first real slice of `:app`'s shared `commonMain` now compiles **and runs** on wasm —
+> the web demo downloads a live OSM area and parses it with the **real shared `MapDataApiParser`** into
+> the real shared model. See M1 and [`adr/0002-shared-source-on-wasm.md`](adr/0002-shared-source-on-wasm.md)._
 >
 > This document plans a Progressive Web App (PWA) build of StreetComplete. It is a
 > living document — update the milestone checkboxes and open questions as work
@@ -154,6 +156,19 @@ Check off as completed. Each milestone should be independently demoable.
       async IndexedDB flush); the durable-at-scale path (data layer in a Worker over an OPFS
       sync-access VFS — ADR Option 1) is the follow-up and slots in behind the same interface. The
       headless "download a small area" flow at full OSM data volume waits on that Option 1 step.
+
+      **Shared `commonMain` now compiles & runs on wasm (first real slice).** `:web` no longer only
+      *mirrors* the shared types — it compiles the **real** `:app` domain source for wasmJs via a
+      curated source bridge (`web/build.gradle.kts`: `:app`'s `commonMain` added as a source dir with an
+      `include(...)` filter selecting the wasm-ready files). The first slice is the OSM data core — the
+      element model, geometry, spherical math, `BoundingBox`, and the **`MapDataApiParser`** — and the
+      demo exercises it end-to-end: the real `BoundingBox.toOsmApiString()` builds the query, a live
+      `/api/0.6/map` download (CORS OK) is parsed by the real shared parser into the real
+      `MutableMapData` (916 nodes / 89 ways / 107 relations from a ~150 m Berlin area, multi-byte names
+      intact). The `map/LatLon` mirror is deleted (the map uses the real `LatLon` now). This surfaced —
+      and fixed with an additive `CharSequence` overload — a real xmlutil-on-wasm UTF-8 bug, and the
+      dependency wall for the rest: `osmfeatures` (and `countryboundaries`) have no wasmJs target. See
+      [`adr/0002-shared-source-on-wasm.md`](adr/0002-shared-source-on-wasm.md).
 - [~] **M2 — Map MVP.** _In progress._ `maplibre-gl-js` is wired into `:web` behind a Kotlin
       interop boundary (`web/.../map/WebMap.kt`): a full-screen vector map ([OpenFreeMap
       Liberty](https://openfreemap.org/), keyless/OSM-based) renders with pan/zoom, maplibre's
@@ -168,6 +183,10 @@ Check off as completed. Each milestone should be independently demoable.
       arrive with the quest work (M3/M6) and the shared-UI migration.
 - [ ] **M3 — First quests end-to-end.** A handful of high-frequency quest forms
       migrated to common Compose; view quest → answer → local edit recorded.
+      _Groundwork landed: the real shared OSM model + `MapDataApiParser` now compile & run on wasm and
+      parse live OSM data (see M1). **Blocked next step:** the quest/feature layer depends on
+      `osmfeatures`, which has no js/wasmJs target — that must be resolved upstream (or the module
+      vendored) before quest forms can compile for web. See [`adr/0002`](adr/0002-shared-source-on-wasm.md)._
 - [ ] **M4 — Auth + upload.** OSM OAuth redirect login; changeset upload from web.
 - [~] **M5 — PWA shell.** Manifest + Service Worker; installable; offline app
       launch — _done (walking-skeleton shell, see M0/M5-partial above)_. **Geolocation** now works
@@ -190,9 +209,16 @@ A logged-in user can, in a modern desktop or mobile browser:
 
 ## 8. Risks & open questions
 
+- **Shared dependencies without a wasmJs target.** `de.westnordost:osmfeatures` (no js **or** wasm
+  target) and `de.westnordost:countryboundaries` (js but no wasm) block compiling the parts of
+  `commonMain` that use them — notably the feature dictionary and most quest forms. Both are
+  westnordost's own libraries, so wasmJs support is attainable upstream; until then those slices can't
+  reach web. `com.cheonjaeung.compose.grid` (no wasm) similarly blocks some quest-form UI. This is now
+  the gating dependency for M3/M6. See [`adr/0002-shared-source-on-wasm.md`](adr/0002-shared-source-on-wasm.md).
 - **Compose/canvas accessibility.** Canvas-rendered UI has weaker a11y/SEO than
   DOM. Needs an early review; if blocking, the Kotlin/JS + DOM-UI alternative
-  (§2) is the fallback for at least the shell.
+  (§2) is the fallback for at least the shell. (Confirmed concretely: the Compose overlay's buttons are
+  not exposed in the DOM accessibility tree — they render only to the canvas.)
 - **Bundle size / cold start.** Wasm + skiko payload; measure at M0 and budget.
 - **OPFS / Wasm-SQLite maturity** across target browsers (esp. iOS Safari).
 - **No real background execution** on web — downloads/uploads are foreground-only;

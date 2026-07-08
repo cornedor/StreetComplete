@@ -18,6 +18,16 @@ class MapDataApiParser {
     ): MutableMapData =
         xmlStreaming.newReader(source).parseMapData(ignoreRelation)
 
+    /** Parse already-decoded XML text. Equivalent to the [Source] overload but reads characters
+     *  directly instead of decoding bytes: on Kotlin/Wasm xmlutil's byte-`Source` reader aborts at
+     *  the first multi-byte UTF-8 character (spurious "Unexpected EOF"), so the web target — which
+     *  already has the response as a decoded string — uses this path. */
+    fun parseMapData(
+        xml: CharSequence,
+        ignoreRelation: (tags: Map<String, String>) -> Boolean = { false }
+    ): MutableMapData =
+        xmlStreaming.newReader(xml).parseMapData(ignoreRelation)
+
     fun parseElementUpdates(source: Source): Map<ElementKey, ElementUpdate> =
         xmlStreaming.newReader(source).parseElementUpdates()
 }

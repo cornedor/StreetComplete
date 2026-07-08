@@ -6,7 +6,7 @@ import de.westnordost.streetcomplete.web.data.Database
 import de.westnordost.streetcomplete.web.data.WebDatabase
 import de.westnordost.streetcomplete.web.data.installDatabaseInterop
 import de.westnordost.streetcomplete.web.di.webModule
-import de.westnordost.streetcomplete.web.map.LatLon
+import de.westnordost.streetcomplete.data.osm.mapdata.LatLon
 import de.westnordost.streetcomplete.web.map.WebMap
 import de.westnordost.streetcomplete.web.map.isMapLibreLoaded
 import kotlinx.browser.document

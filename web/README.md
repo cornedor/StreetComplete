@@ -2,10 +2,12 @@
 
 The **Compose Multiplatform for Web (Kotlin/Wasm)** target of StreetComplete. It started as
 the milestone **M0** walking skeleton — proving the web toolchain end to end — grew the **M1**
-platform services that the shared `:app` code will plug into (DI, settings, HTTP, and now a
-synchronous **`Database`** via sql.js + IndexedDB), and has an **M2** map (maplibre-gl-js)
-rendering with pan/zoom and current-location. See the
-[PWA port roadmap](../docs/pwa-port/ROADMAP.md).
+platform services that the shared `:app` code plugs into (DI, settings, HTTP, and a synchronous
+**`Database`** via sql.js + IndexedDB), and has an **M2** map (maplibre-gl-js) rendering with
+pan/zoom and current-location. Most recently, the **first real slice of `:app`'s shared
+`commonMain` compiles and runs on wasm** — the demo downloads a live OSM area and parses it with the
+**real shared `MapDataApiParser`** into the real shared model (see "Shared-source bridge" below).
+See the [PWA port roadmap](../docs/pwa-port/ROADMAP.md).
 
 ## Why it's isolated from `:app`
 
@@ -39,15 +41,14 @@ toolchain used by the Kotlin/Wasm browser tooling.
 
 | File | Purpose |
 |---|---|
-| `build.gradle.kts` | wasmJs target + Compose for Web + M1 service deps |
+| `build.gradle.kts` | wasmJs target + Compose for Web + M1 service deps + the **shared-source bridge** (§ below) |
 | `src/wasmJsMain/kotlin/.../Main.kt` | entry point; starts Koin, then mounts Compose |
 | `src/wasmJsMain/kotlin/.../di/WebModule.kt` | Koin module: settings + HTTP client (M1) |
-| `src/wasmJsMain/kotlin/.../data/Database.kt` | verbatim copy of the shared `Database` interface (mirror, like `LatLon`) |
+| `src/wasmJsMain/kotlin/.../data/Database.kt` | verbatim copy of the shared `Database` interface (mirror; still present) |
 | `src/wasmJsMain/kotlin/.../data/WebDatabase.kt` | web `Database`: sql.js + IndexedDB interop boundary + impl (M1) |
 | `src/wasmJsMain/kotlin/.../WebDatabaseHolder.kt` | bridges the async DB bootstrap to the Compose UI |
-| `src/wasmJsMain/kotlin/.../map/WebMap.kt` | maplibre-gl-js interop boundary + `WebMap` wrapper (M2) |
-| `src/wasmJsMain/kotlin/.../map/LatLon.kt` | local coordinate type mirroring the shared `LatLon` |
-| `src/wasmJsMain/kotlin/.../App.kt` | overlay UI exercising the M1 services + driving the M2 map |
+| `src/wasmJsMain/kotlin/.../map/WebMap.kt` | maplibre-gl-js interop boundary + `WebMap` wrapper (M2); uses the **real** shared `LatLon` |
+| `src/wasmJsMain/kotlin/.../App.kt` | overlay UI: M1 services, the M2 map, and the shared-parser demo |
 | `src/wasmJsMain/resources/index.html` | host page: loads maplibre + the Wasm bundle, registers the service worker |
 | `src/wasmJsMain/resources/manifest.webmanifest` | web app manifest (name, icons, theme, `display: standalone`) |
 | `src/wasmJsMain/resources/sw.js` | service worker; caches the app shell + bundle for offline launch |
@@ -95,8 +96,9 @@ The web `Database` now lands (`data/WebDatabase.kt`), resolving
   [sql.js](https://sql.js.org) — SQLite compiled to WebAssembly — run **in memory on the main
   thread**. Once `initSqlJs()` has loaded (awaited once at startup), every sql.js call is genuinely
   synchronous, so the whole `Database` surface and all its callers are reused verbatim. `data/Database.kt`
-  is a mirror of the shared interface (kept identical, like `map/LatLon.kt`); once `:web` compiles
-  `:app`'s `commonMain`, the mirror is deleted and `WebDatabase` binds to the real one unchanged.
+  is still a mirror of the shared interface (kept identical); it is deleted once the shared DAO slice
+  reaches the source bridge (§ "Shared-source bridge"), at which point `WebDatabase` binds the real
+  `Database` unchanged — exactly as the `map/LatLon.kt` mirror was already replaced by the real `LatLon`.
 - **Durable, off the hot path.** After each mutation the in-memory image is exported and written to
   **IndexedDB** (debounced), and reloaded on startup — so the database survives reloads without the
   main thread ever blocking on storage. `main()` bootstraps it asynchronously and binds it into Koin
@@ -141,15 +143,45 @@ Still to port (with the quest work in M3/M6 and the shared-UI migration): the re
 `screens/main/map/components/*` layers (styleable overlay, quest / selected pins, tracks,
 downloaded-area, focus geometry) against the JS map, and StreetComplete's own map style.
 
+## Shared-source bridge — real `:app` code on wasm
+
+`:web` now compiles a **curated slice of `:app`'s real `commonMain` source** for wasmJs — the payoff of
+the whole port (reuse, not reimplementation). It is not yet a `:web → :app` module dependency, because
+adding a `wasmJs` target to `:app` is blocked: two of `:app`'s own dependencies have no wasmJs target
+(`osmfeatures` — no js/wasm at all; `countryboundaries` — js but no wasm), and a couple of files use
+`runBlocking`/`Dispatchers.IO` (absent on wasm). Full analysis + decision:
+[`docs/pwa-port/adr/0002-shared-source-on-wasm.md`](../docs/pwa-port/adr/0002-shared-source-on-wasm.md).
+
+Instead, `build.gradle.kts` adds `:app/src/commonMain/kotlin` as a source directory and uses a Gradle
+`include(...)` filter to compile **exactly** the wasm-ready files — no copies (the real files are
+compiled in place), no change to `:app`'s build, no risk to the Android/iOS targets. The `include` list
+**is** the manifest of "shared code proven on wasm"; grow it as more of `commonMain` becomes wasm-safe.
+When the surface is large/stable enough it graduates to a real shared module (with a `wasmJs` target)
+and this bridge is deleted.
+
+The first slice is the **OSM data core**: the element model
+(`Element`/`Node`/`Way`/`Relation`/`LatLon`…), `BoundingBox`, `MapData`/`MutableMapData`, the element
+geometry model, the spherical-earth math, and the **`MapDataApiParser`**. The demo (`App.kt`,
+"Download & parse area") runs it end-to-end: the real `BoundingBox.toOsmApiString()` builds an OSM
+`bbox` query, a live `/api/0.6/map` download is parsed by the real shared parser into the real
+`MutableMapData` — ~900 nodes / ~90 ways / ~100 relations from a ~150 m Berlin area, multi-byte names
+("Straße", "Dom-Aquarée") intact. With the real `LatLon` now compiled, the `map/LatLon.kt` mirror is
+deleted; `WebMap` uses the shared type.
+
+> **One shared-code change was needed** (additive): on wasm, xmlutil's byte-`Source` XML reader aborts
+> at the first multi-byte UTF-8 character, so `MapDataApiParser` gained a `CharSequence` overload that
+> reads the already-decoded string. Android/iOS keep using the byte-`Source` overload unchanged.
+
 ## Next
 
-With settings, HTTP, the map, and now the `Database` all in place, the next steps are:
-
-1. **Durable-at-scale storage (ADR 0001 Option 1)** — move the data layer into a Web Worker over an
+1. **Unblock the quest/feature layer** — get a `js`/`wasmJs` target into `osmfeatures` (and
+   `countryboundaries`) upstream, or vendor them, so the feature dictionary and quest forms can compile
+   for web (gates M3/M6).
+2. **Grow the bridge toward the download flow** — add the wasm-friendly parts of the map-data controller
+   / DAOs and bind them to the web `Database`, and rewrite the two `runBlocking`/`Dispatchers.IO`
+   download-orchestration files, working toward the headless "download a small area into the DB" flow.
+3. **Durable-at-scale storage (ADR 0001 Option 1)** — move the data layer into a Web Worker over an
    OPFS sync-access VFS so the full downloaded OSM dataset fits, replacing `WebDatabase`'s in-memory
    store behind the same `Database` interface.
-2. **Wire the first shared `:app` services against these bindings** — start compiling parts of
-   `:app`'s `commonMain` for wasmJs and bind the shared DAOs to the `Database` provided here, working
-   toward the headless "download a small area" flow.
 
 See [`docs/pwa-port/ROADMAP.md`](../docs/pwa-port/ROADMAP.md).

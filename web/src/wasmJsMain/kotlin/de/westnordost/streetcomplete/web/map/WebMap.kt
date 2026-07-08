@@ -1,5 +1,6 @@
 package de.westnordost.streetcomplete.web.map
 
+import de.westnordost.streetcomplete.data.osm.mapdata.LatLon
 import kotlin.js.JsAny
 
 /**

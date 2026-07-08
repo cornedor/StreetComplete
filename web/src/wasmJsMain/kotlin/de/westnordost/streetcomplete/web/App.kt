@@ -24,9 +24,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.russhwolf.settings.ObservableSettings
+import de.westnordost.streetcomplete.data.osm.mapdata.BoundingBox
+import de.westnordost.streetcomplete.data.osm.mapdata.LatLon
+import de.westnordost.streetcomplete.data.osm.mapdata.MapDataApiParser
+import de.westnordost.streetcomplete.data.osm.mapdata.toOsmApiString
 import de.westnordost.streetcomplete.web.data.ConflictAlgorithm
 import de.westnordost.streetcomplete.web.data.Database
-import de.westnordost.streetcomplete.web.map.LatLon
 import de.westnordost.streetcomplete.web.map.WebMap
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
@@ -116,9 +119,95 @@ fun App(map: WebMap?) {
 
                 // --- Web Database: sql.js + IndexedDB (M1) ---
                 DatabaseSection()
+
+                Divider()
+
+                // --- Real shared code on wasm: download + parse OSM data (M1/M3 groundwork) ---
+                OsmDownloadParseSection(httpClient)
             }
         }
     }
+}
+
+/**
+ * Downloads a small OpenStreetMap area and parses it with the **real, shared**
+ * [MapDataApiParser] — the exact class the Android/iOS apps use — running here compiled to wasm.
+ *
+ * This is the first slice of `:app`'s `commonMain` to run in the browser (see the source bridge in
+ * web/build.gradle.kts and docs/pwa-port/adr/0002-shared-source-on-wasm.md). The whole pipeline is
+ * shared domain code: the [BoundingBox] builds the OSM `bbox` query string via its real
+ * `toOsmApiString()`, the response XML is parsed by the shared parser into the shared model
+ * ([de.westnordost.streetcomplete.data.osm.mapdata.MutableMapData] of `Node`/`Way`/`Relation`), and
+ * we report what came back. It is a concrete step toward MVP §7.2 ("download data for the area").
+ */
+@Composable
+private fun OsmDownloadParseSection(httpClient: HttpClient) {
+    val scope = rememberCoroutineScope()
+    var status by remember { mutableStateOf("") }
+    var report by remember { mutableStateOf<List<String>>(emptyList()) }
+    var busy by remember { mutableStateOf(false) }
+
+    Text("Shared OSM parser on wasm:", style = MaterialTheme.typography.body2)
+    Text(
+        "Downloads a ~150 m area of central Berlin and parses it with the real shared " +
+            "MapDataApiParser (the same class the Android/iOS apps use).",
+        style = MaterialTheme.typography.caption,
+    )
+    Button(
+        enabled = !busy,
+        onClick = {
+            busy = true
+            status = "Downloading & parsing…"
+            report = emptyList()
+            scope.launch {
+                try {
+                    report = downloadAndParseOsmArea(httpClient)
+                    status = ""
+                } catch (e: Throwable) {
+                    // A CORS/network failure, or a parser/model error, surfaces here.
+                    status = "Failed: ${e.message ?: e::class.simpleName}"
+                } finally {
+                    busy = false
+                }
+            }
+        },
+    ) {
+        Text("Download & parse area")
+    }
+    if (status.isNotEmpty()) {
+        Spacer(Modifier.height(4.dp))
+        Text(status, style = MaterialTheme.typography.body2)
+    }
+    for (line in report) {
+        Text("• $line", style = MaterialTheme.typography.body2)
+    }
+}
+
+/**
+ * Fetches [DEMO_BBOX] from the OSM API and runs it through the shared [MapDataApiParser], returning
+ * a human-readable report of the parsed [de.westnordost.streetcomplete.data.osm.mapdata.MapData].
+ */
+private suspend fun downloadAndParseOsmArea(httpClient: HttpClient): List<String> {
+    val lines = mutableListOf<String>()
+
+    // Build the bbox query with the shared BoundingBox.toOsmApiString() (minLon,minLat,maxLon,maxLat).
+    val url = "$OSM_API_BASE/map?bbox=${DEMO_BBOX.toOsmApiString()}"
+    val xml = httpClient.get(url).bodyAsText()
+    lines += "Downloaded ${xml.length} chars of OSM XML."
+
+    // Parse with the real shared MapDataApiParser. We pass the decoded string (its CharSequence
+    // overload) rather than a byte Source: on wasm xmlutil's byte reader aborts at the first
+    // multi-byte UTF-8 char (see MapDataApiParser). This is real shared domain code running on wasm.
+    val mapData = MapDataApiParser().parseMapData(xml)
+    lines += "Parsed: ${mapData.nodes.size} nodes, ${mapData.ways.size} ways, " +
+        "${mapData.relations.size} relations."
+    val named = mapData.mapNotNull { el -> el.tags["name"]?.let { "${el.type.name.lowercase()}: $it" } }
+        .distinct()
+        .take(5)
+    if (named.isNotEmpty()) {
+        lines += "Named features include: ${named.joinToString("; ")}."
+    }
+    return lines
 }
 
 /**
@@ -272,4 +361,12 @@ private val DEMO_PLACES = listOf(
 private const val DEMO_PLACE_ZOOM = 12.0
 
 private const val KEY_LAUNCH_COUNT = "web.demo.launchCount"
-private const val OSM_API_CAPABILITIES_URL = "https://api.openstreetmap.org/api/0.6/capabilities"
+private const val OSM_API_BASE = "https://api.openstreetmap.org/api/0.6"
+private const val OSM_API_CAPABILITIES_URL = "$OSM_API_BASE/capabilities"
+
+/** A tiny (~150 m) area of central Berlin to download & parse — small enough to keep the request
+ *  and in-browser parse light, dense enough to return real nodes, ways and named features. */
+private val DEMO_BBOX = BoundingBox(
+    minLatitude = 52.5190, minLongitude = 13.4030,
+    maxLatitude = 52.5205, maxLongitude = 13.4050,
+)

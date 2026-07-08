@@ -21,6 +21,7 @@ import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
  */
 plugins {
     id("org.jetbrains.kotlin.multiplatform")
+    id("org.jetbrains.kotlin.plugin.serialization")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.compose")
 }
@@ -69,11 +70,62 @@ kotlin {
                 implementation("io.ktor:ktor-client-core:3.5.0")
                 implementation("io.ktor:ktor-client-js:3.5.0")
                 implementation("io.ktor:ktor-client-encoding:3.5.0")
-                // kotlinx-serialization JSON runtime: used as the value-marshalling format across the
-                // sql.js interop boundary in data/WebDatabase.kt (no compiler plugin needed — only the
-                // runtime JsonElement API is used, not @Serializable codegen).
+                // kotlinx-serialization JSON runtime: the value-marshalling format across the sql.js
+                // interop boundary in data/WebDatabase.kt, and the serializer runtime for the shared
+                // @Serializable model classes now compiled via the bridge below (Element, BoundingBox…).
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+
+                // --- Deps required by the bridged shared source (see the srcDir bridge below) ---
+                // The real shared OSM data model + MapDataApiParser use these; versions match
+                // app/build.gradle.kts so nothing changes when :app itself gains a wasmJs target.
+                // kotlinx-io: the `Source` the shared MapDataApiParser reads from.
+                implementation("org.jetbrains.kotlinx:kotlinx-io-core:0.9.1")
+                // xmlutil: the streaming XML reader the shared parser uses (core-io bridges it to
+                // kotlinx-io via `xmlStreaming.newReader(source)`).
+                implementation("io.github.pdvrieze.xmlutil:core:0.91.3")
+                implementation("io.github.pdvrieze.xmlutil:core-io:0.91.3")
             }
+
+            // --- Bridge: compile a curated slice of :app's real commonMain for wasmJs ---
+            // The port's end state is that :web consumes :app's commonMain directly. That is blocked
+            // today because two of :app's own dependencies have no wasmJs target — `osmfeatures` (no
+            // js/wasm at all) and `countryboundaries` (js but no wasm) — plus a couple of files use
+            // JVM/native-only coroutine APIs (runBlocking, Dispatchers.IO). See
+            // docs/pwa-port/adr/0002-shared-source-on-wasm.md.
+            //
+            // Rather than fork/duplicate, we compile the REAL :app source files (no copies) for the
+            // dependency-light core that IS wasm-ready — the OSM element model, geometry, and the OSM
+            // API XML parser — by adding :app's commonMain as a source directory and restricting, via
+            // the include filter below, exactly which files are compiled. This keeps the closure from
+            // pulling in the blocked deps, and the include list doubles as the manifest of "shared code
+            // proven on wasm". As more of commonMain becomes wasm-safe the list grows; when :app gets
+            // its own wasmJs target this whole block is deleted and :web depends on :app instead.
+            kotlin.srcDir(rootProject.projectDir.resolve("app/src/commonMain/kotlin"))
+            kotlin.include(
+                // this module's own sources
+                "de/westnordost/streetcomplete/web/**",
+                // --- bridged real :app/commonMain sources (wasm-safe core) ---
+                // OSM element model (Element/Node/Way/Relation/RelationMember/ElementType/LatLon)
+                "de/westnordost/streetcomplete/data/osm/mapdata/Element.kt",
+                "de/westnordost/streetcomplete/data/osm/mapdata/ElementKey.kt",
+                "de/westnordost/streetcomplete/data/osm/mapdata/ElementUpdate.kt",
+                "de/westnordost/streetcomplete/data/osm/mapdata/MapData.kt",
+                "de/westnordost/streetcomplete/data/osm/mapdata/MutableMapData.kt",
+                "de/westnordost/streetcomplete/data/osm/mapdata/BoundingBox.kt",
+                // OSM API XML parser (parses a /map download into MutableMapData)
+                "de/westnordost/streetcomplete/data/osm/mapdata/MapDataApiParser.kt",
+                // element geometry model
+                "de/westnordost/streetcomplete/data/osm/geometry/ElementGeometry.kt",
+                "de/westnordost/streetcomplete/data/osm/geometry/ElementGeometryEntry.kt",
+                // small pure-Kotlin helpers the above transitively need
+                "de/westnordost/streetcomplete/util/ktx/XmlReader.kt",
+                "de/westnordost/streetcomplete/util/ktx/Double.kt",
+                "de/westnordost/streetcomplete/util/ktx/Collections.kt",
+                "de/westnordost/streetcomplete/util/math/SphericalEarthMath.kt",
+                "de/westnordost/streetcomplete/util/math/SphericalEarthMathVector3d.kt",
+                "de/westnordost/streetcomplete/util/math/Vector3d.kt",
+                "de/westnordost/streetcomplete/util/math/AngleMath.kt",
+            )
         }
     }
 }
